@@ -176,49 +176,32 @@ class PageFlipWidgetState extends State<PageFlipWidget>
 
   /// Triggers the animation to advance to the next page – via gesture or button.
   Future nextPage() async {
-    // Prevent going beyond the last page
     if (_isLastPage) return;
-    widget.onFlipStart?.call();
-    // Update currentPage to trigger the builder effect
-    currentPage.value = pageNumber;
-    await _controllers[pageNumber].reverse();
+    final controller = _controllers[pageNumber];
+    if (controller.status == AnimationStatus.completed) {
+      controller.value = 1.0;
+    }
+    await controller.reverse();
     if (mounted) {
       setState(() {
         pageNumber++;
       });
-      if (pageNumber < pages.length) {
-        currentPageIndex.value = pageNumber;
-        currentWidget.value = pages[pageNumber];
-      }
-      // In case it is the last page, ensure the notifiers are updated
-      if (_isLastPage) {
-        currentPageIndex.value = pageNumber;
-        currentWidget.value = pages[pageNumber];
-      }
-      widget.onPageFlipped?.call(pageNumber);
     }
-    // Reset currentPage after the animation
-    currentPage.value = -1;
   }
 
   /// Triggers the animation to go back to the previous page – via gesture or button.
   Future previousPage() async {
-    // Prevent going before the first page
     if (_isFirstPage) return;
-    widget.onFlipStart?.call();
-    // Update currentPage to trigger the reverse animation effect
-    currentPage.value = pageNumber - 1;
-    await _controllers[pageNumber - 1].forward();
+    final controller = _controllers[pageNumber - 1];
+    if (controller.status == AnimationStatus.dismissed) {
+      controller.value = 0.0;
+    }
+    await controller.forward();
     if (mounted) {
       setState(() {
         pageNumber--;
       });
-      currentPageIndex.value = pageNumber;
-      currentWidget.value = pages[pageNumber];
-      imageData[pageNumber] = null;
-      widget.onPageFlipped?.call(pageNumber);
     }
-    currentPage.value = -1;
   }
 
   Future goToPage(int index) async {

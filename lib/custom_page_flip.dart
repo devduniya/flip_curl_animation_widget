@@ -14,6 +14,7 @@ class CustomPageFlip extends StatefulWidget {
     this.initialIndex = 0,
     this.lastPage,
     this.isRightSwipe = false,
+    this.showControllerButton = false,
     this.onPageChanged,
   })  : assert(initialIndex < children.length,
             'initialIndex cannot be greater than children length'),
@@ -27,6 +28,7 @@ class CustomPageFlip extends StatefulWidget {
   final double cutoffForward;
   final double cutoffPrevious;
   final bool isRightSwipe;
+  final bool showControllerButton;
   final ValueChanged<int>? onPageChanged;
 
   @override
@@ -167,6 +169,61 @@ class CustomPageFlipState extends State<CustomPageFlip>
     currentPage.value = -1;
   }
 
+  Future animateToNextPage() async {
+    if (_isLastPage) return;
+
+    // Update currentPage and currentPageIndex to the current page to render new page
+    currentPage.value = pageNumber;
+    currentPageIndex.value = pageNumber;
+
+    // Let Flutter rebuild widgets and capture images asynchronously
+    await Future.delayed(const Duration(milliseconds: 50));
+
+    // Then animate flipping the page backward (reverse animation)
+    await _controllers[pageNumber].reverse();
+
+    if (mounted) {
+      setState(() {
+        pageNumber++;
+      });
+
+      // Update the notifiers for the new page
+      currentPageIndex.value = pageNumber;
+      currentWidget.value = pages[pageNumber];
+
+      if (widget.onPageChanged != null) {
+        widget.onPageChanged!(pageNumber);
+      }
+    }
+  }
+
+  Future animateToPreviousPage() async {
+    if (_isFirstPage) return;
+
+    // Update currentPage and currentPageIndex
+    currentPage.value = pageNumber - 1;
+    currentPageIndex.value = pageNumber - 1;
+
+    // Wait to let widget render and image capture
+    await Future.delayed(const Duration(milliseconds: 50));
+
+    // Animate the previous page flip forward
+    await _controllers[pageNumber - 1].forward();
+
+    if (mounted) {
+      setState(() {
+        pageNumber--;
+      });
+
+      currentPageIndex.value = pageNumber;
+      currentWidget.value = pages[pageNumber];
+
+      if (widget.onPageChanged != null) {
+        widget.onPageChanged!(pageNumber);
+      }
+    }
+  }
+
   Future nextPage() async {
     await _controllers[pageNumber].reverse();
     if (mounted) {
@@ -226,27 +283,67 @@ class CustomPageFlipState extends State<CustomPageFlip>
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, dimens) => GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTapDown: (details) {},
-        onTapUp: (details) {},
-        onPanDown: (details) {},
-        onPanEnd: (details) {},
-        onTapCancel: () {},
-        onHorizontalDragCancel: () => _isForward = null,
-        onHorizontalDragUpdate: (details) => _turnPage(details, dimens),
-        onHorizontalDragEnd: (details) => _onDragFinish(),
-        child: Stack(
-          fit: StackFit.expand,
-          children: <Widget>[
-            if (widget.lastPage != null) ...[
-              widget.lastPage!,
+    return Stack(children: [
+      LayoutBuilder(
+        builder: (context, dimens) => GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (details) {},
+          onTapUp: (details) {},
+          onPanDown: (details) {},
+          onPanEnd: (details) {},
+          onTapCancel: () {},
+          onHorizontalDragCancel: () => _isForward = null,
+          onHorizontalDragUpdate: (details) => _turnPage(details, dimens),
+          onHorizontalDragEnd: (details) => _onDragFinish(),
+          child: Stack(
+            fit: StackFit.expand,
+            children: <Widget>[
+              if (widget.lastPage != null) ...[
+                widget.lastPage!,
+              ],
+              if (pages.isNotEmpty) ...pages else ...[const SizedBox.shrink()],
             ],
-            if (pages.isNotEmpty) ...pages else ...[const SizedBox.shrink()],
-          ],
+          ),
         ),
       ),
-    );
+
+      if (!_isFirstPage && widget.showControllerButton)
+        Positioned(
+          left: 16,
+          top: 0,
+          bottom: 0,
+          child: Center(
+            child: FloatingActionButton(
+              heroTag: "prev_btn",
+              onPressed: () async {
+                if (!_isFirstPage) await animateToPreviousPage();
+              },
+              child: Icon(Icons.arrow_back_ios_new_rounded),
+              backgroundColor: Colors.grey.withValues(alpha: 0.7),
+              mini: true,
+              elevation: 4,
+            ),
+          ),
+        ),
+      // Right-side Next button
+      if (!_isLastPage && widget.showControllerButton)
+        Positioned(
+          right: 16,
+          top: 0,
+          bottom: 0,
+          child: Center(
+            child: FloatingActionButton(
+              heroTag: "next_btn",
+              onPressed: () async {
+                if (!_isLastPage) await animateToNextPage();
+              },
+              child: Icon(Icons.arrow_forward_ios_rounded),
+              backgroundColor: Colors.grey.withValues(alpha: 0.7),
+              mini: true,
+              elevation: 4,
+            ),
+          ),
+        ),
+    ]);
   }
 }
