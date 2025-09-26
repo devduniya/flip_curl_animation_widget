@@ -21,7 +21,7 @@ class PageFlipWidget extends StatefulWidget {
     this.onFlipStart,
     this.controller,
   })  : assert(initialIndex < children.length,
-            'initialIndex cannot be greater than children length'),
+  'initialIndex cannot be greater than children length'),
         super(key: key);
 
   final Color backgroundColor;
