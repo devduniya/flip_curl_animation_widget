@@ -1,7 +1,25 @@
 import 'dart:async';
-
+import 'dart:ui';
 import 'package:flip_curl_animation_widget/src/builders/builder.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+
+// PageFlipController class from PageFlipWidget
+class PageFlipController {
+  CustomPageFlipState? _state;
+
+  void nextPage() {
+    _state?.animateToNextPage();
+  }
+
+  void previousPage() {
+    _state?.animateToPreviousPage();
+  }
+
+  void goToPage(int index) {
+    _state?.goToPage(index);
+  }
+}
 
 class CustomPageFlip extends StatefulWidget {
   const CustomPageFlip({
@@ -16,6 +34,10 @@ class CustomPageFlip extends StatefulWidget {
     this.isRightSwipe = false,
     this.showControllerButton = false,
     this.onPageChanged,
+    this.onPageFlipped,
+    this.onFlipStart,
+    this.controller,
+    required this.transformationControllerBuilder,
   })  : assert(initialIndex < children.length,
             'initialIndex cannot be greater than children length'),
         super(key: key);
@@ -29,11 +51,21 @@ class CustomPageFlip extends StatefulWidget {
   final double cutoffPrevious;
   final bool isRightSwipe;
   final bool showControllerButton;
+  final TransformationController Function(int pageIndex)?
+      transformationControllerBuilder;
+
+  // Merged callbacks from both widgets
   final ValueChanged<int>? onPageChanged;
+  final void Function(int pageNumber)? onPageFlipped;
+  final void Function()? onFlipStart;
+  final PageFlipController? controller;
 
   @override
   CustomPageFlipState createState() => CustomPageFlipState();
 }
+
+
+enum _GestureMode { none, scaling, dragging }
 
 class CustomPageFlipState extends State<CustomPageFlip>
     with TickerProviderStateMixin {
@@ -41,6 +73,10 @@ class CustomPageFlipState extends State<CustomPageFlip>
   List<Widget> pages = [];
   final List<AnimationController> _controllers = [];
   bool? _isForward;
+  int lastPageLoad = 0;
+  TransformationController? transformationController;
+
+  final ValueNotifier<_GestureMode> _gestureMode = ValueNotifier(_GestureMode.none);
 
   @override
   void didUpdateWidget(CustomPageFlip oldWidget) {
@@ -52,16 +88,22 @@ class CustomPageFlipState extends State<CustomPageFlip>
     for (var c in _controllers) {
       c.dispose();
     }
+
     super.dispose();
   }
 
   @override
   void initState() {
     super.initState();
+    // Initialize global variables
     imageData = {};
     currentPage = ValueNotifier(-1);
     currentWidget = ValueNotifier(Container());
     currentPageIndex = ValueNotifier(0);
+
+    // Associate controller
+    widget.controller?._state = this;
+
     _setUp();
   }
 
@@ -71,6 +113,7 @@ class CustomPageFlipState extends State<CustomPageFlip>
     if (widget.lastPage != null) {
       widget.children.add(widget.lastPage!);
     }
+
     for (var i = 0; i < widget.children.length; i++) {
       final controller = AnimationController(
         value: 1,
@@ -78,14 +121,36 @@ class CustomPageFlipState extends State<CustomPageFlip>
         vsync: this,
       );
       _controllers.add(controller);
+
+      // Get TransformationController from PdfController via widget.controller
+      TransformationController transformationController =
+          widget.transformationControllerBuilder?.call(i) ??
+              TransformationController();
+
       final child = PageFlipBuilder(
         amount: controller,
         backgroundColor: widget.backgroundColor,
         isRightSwipe: widget.isRightSwipe,
         pageIndex: i,
         key: Key('item$i'),
-        child: widget.children[i],
+        child: Listener(
+          onPointerDown: (e) {
+            if (e.buttons == 0) return;
+            if (e.kind == PointerDeviceKind.touch && e.down && e.buttons == kSecondaryButton) return;
+          },
+          child: InteractiveViewer(
+            transformationController: transformationController,
+            panEnabled: false,       // disable internal panning
+            scaleEnabled: true,       // only zoom
+            onInteractionStart: (details) {
+              if (details.pointerCount > 1) _gestureMode.value = _GestureMode.scaling;
+            },
+            onInteractionEnd: (details) => _gestureMode.value = _GestureMode.none,
+            child: widget.children[i],
+          ),
+        ),
       );
+
       pages.add(child);
     }
     pages = pages.reversed.toList();
@@ -104,14 +169,18 @@ class CustomPageFlipState extends State<CustomPageFlip>
 
   bool get _isLastPage => (pages.length - 1) == pageNumber;
 
-  int lastPageLoad = 0;
-
   bool get _isFirstPage => pageNumber == 0;
 
   void _turnPage(DragUpdateDetails details, BoxConstraints dimens) {
     currentPage.value = pageNumber;
     currentWidget.value = Container();
     final ratio = details.delta.dx / dimens.maxWidth;
+
+    // Call onFlipStart callback
+    if (_isForward == null && widget.onFlipStart != null) {
+      widget.onFlipStart!();
+    }
+
     if (_isForward == null) {
       if (widget.isRightSwipe
           ? details.delta.dx < 0.0
@@ -142,7 +211,7 @@ class CustomPageFlipState extends State<CustomPageFlip>
       if (_isForward == true) {
         if (!_isLastPage &&
             _controllers[pageNumber].value <= (widget.cutoffForward + 0.15)) {
-          await nextPage();
+          await animateToNextPage();
         } else {
           if (!_isLastPage) {
             await _controllers[pageNumber].forward();
@@ -151,14 +220,14 @@ class CustomPageFlipState extends State<CustomPageFlip>
       } else {
         if (!_isFirstPage &&
             _controllers[pageNumber - 1].value >= widget.cutoffPrevious) {
-          await previousPage();
+          await animateToPreviousPage();
         } else {
           if (_isFirstPage) {
             await _controllers[pageNumber].forward();
           } else {
             await _controllers[pageNumber - 1].reverse();
             if (!_isFirstPage) {
-              await previousPage();
+              await animateToPreviousPage();
             }
           }
         }
@@ -172,14 +241,10 @@ class CustomPageFlipState extends State<CustomPageFlip>
   Future animateToNextPage() async {
     if (_isLastPage) return;
 
-    // Update currentPage and currentPageIndex to the current page to render new page
     currentPage.value = pageNumber;
     currentPageIndex.value = pageNumber;
 
-    // Let Flutter rebuild widgets and capture images asynchronously
     await Future.delayed(const Duration(milliseconds: 50));
-
-    // Then animate flipping the page backward (reverse animation)
     await _controllers[pageNumber].reverse();
 
     if (mounted) {
@@ -187,12 +252,15 @@ class CustomPageFlipState extends State<CustomPageFlip>
         pageNumber++;
       });
 
-      // Update the notifiers for the new page
       currentPageIndex.value = pageNumber;
       currentWidget.value = pages[pageNumber];
 
+      // Call both callbacks
       if (widget.onPageChanged != null) {
         widget.onPageChanged!(pageNumber);
+      }
+      if (widget.onPageFlipped != null) {
+        widget.onPageFlipped!(pageNumber);
       }
     }
   }
@@ -200,14 +268,10 @@ class CustomPageFlipState extends State<CustomPageFlip>
   Future animateToPreviousPage() async {
     if (_isFirstPage) return;
 
-    // Update currentPage and currentPageIndex
     currentPage.value = pageNumber - 1;
     currentPageIndex.value = pageNumber - 1;
 
-    // Wait to let widget render and image capture
     await Future.delayed(const Duration(milliseconds: 50));
-
-    // Animate the previous page flip forward
     await _controllers[pageNumber - 1].forward();
 
     if (mounted) {
@@ -218,19 +282,31 @@ class CustomPageFlipState extends State<CustomPageFlip>
       currentPageIndex.value = pageNumber;
       currentWidget.value = pages[pageNumber];
 
+      // Call both callbacks
       if (widget.onPageChanged != null) {
         widget.onPageChanged!(pageNumber);
+      }
+      if (widget.onPageFlipped != null) {
+        widget.onPageFlipped!(pageNumber);
       }
     }
   }
 
   Future nextPage() async {
-    await _controllers[pageNumber].reverse();
+    if (_isLastPage) return;
+    final controller = _controllers[pageNumber];
+    if (controller.status == AnimationStatus.completed) {
+      controller.value = 1.0;
+    }
+    await controller.reverse();
     if (mounted) {
       setState(() {
         pageNumber++;
       });
+
+      // Call both callbacks
       if (widget.onPageChanged != null) widget.onPageChanged!(pageNumber);
+      if (widget.onPageFlipped != null) widget.onPageFlipped!(pageNumber);
     }
 
     if (pageNumber < pages.length) {
@@ -246,12 +322,20 @@ class CustomPageFlipState extends State<CustomPageFlip>
   }
 
   Future previousPage() async {
-    await _controllers[pageNumber - 1].forward();
+    if (_isFirstPage) return;
+    final controller = _controllers[pageNumber - 1];
+    if (controller.status == AnimationStatus.dismissed) {
+      controller.value = 0.0;
+    }
+    await controller.forward();
     if (mounted) {
       setState(() {
         pageNumber--;
       });
+
+      // Call both callbacks
       if (widget.onPageChanged != null) widget.onPageChanged!(pageNumber);
+      if (widget.onPageFlipped != null) widget.onPageFlipped!(pageNumber);
     }
     currentPageIndex.value = pageNumber;
     currentWidget.value = pages[pageNumber];
@@ -263,7 +347,10 @@ class CustomPageFlipState extends State<CustomPageFlip>
       setState(() {
         pageNumber = index;
       });
+
+      // Call both callbacks
       if (widget.onPageChanged != null) widget.onPageChanged!(pageNumber);
+      if (widget.onPageFlipped != null) widget.onPageFlipped!(pageNumber);
     }
     for (var i = 0; i < _controllers.length; i++) {
       if (i == index) {
@@ -289,9 +376,8 @@ class CustomPageFlipState extends State<CustomPageFlip>
           behavior: HitTestBehavior.opaque,
           onTapDown: (details) {},
           onTapUp: (details) {},
-          onPanDown: (details) {},
-          onPanEnd: (details) {},
           onTapCancel: () {},
+          // Use only horizontal drag gestures for page flipping
           onHorizontalDragCancel: () => _isForward = null,
           onHorizontalDragUpdate: (details) => _turnPage(details, dimens),
           onHorizontalDragEnd: (details) => _onDragFinish(),
@@ -307,6 +393,7 @@ class CustomPageFlipState extends State<CustomPageFlip>
         ),
       ),
 
+      // Navigation buttons
       if (!_isFirstPage && widget.showControllerButton)
         Positioned(
           left: 16,
@@ -325,7 +412,6 @@ class CustomPageFlipState extends State<CustomPageFlip>
             ),
           ),
         ),
-      // Right-side Next button
       if (!_isLastPage && widget.showControllerButton)
         Positioned(
           right: 16,
