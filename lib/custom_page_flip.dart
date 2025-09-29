@@ -1,5 +1,7 @@
- import 'dart:async';
+import 'dart:async';
+import 'dart:ui';
 import 'package:flip_curl_animation_widget/src/builders/builder.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 // PageFlipController class from PageFlipWidget
@@ -37,7 +39,7 @@ class CustomPageFlip extends StatefulWidget {
     this.controller,
     required this.transformationControllerBuilder,
   })  : assert(initialIndex < children.length,
-  'initialIndex cannot be greater than children length'),
+            'initialIndex cannot be greater than children length'),
         super(key: key);
 
   final Color backgroundColor;
@@ -49,7 +51,8 @@ class CustomPageFlip extends StatefulWidget {
   final double cutoffPrevious;
   final bool isRightSwipe;
   final bool showControllerButton;
-  final TransformationController Function(int pageIndex)? transformationControllerBuilder;
+  final TransformationController Function(int pageIndex)?
+      transformationControllerBuilder;
 
   // Merged callbacks from both widgets
   final ValueChanged<int>? onPageChanged;
@@ -61,6 +64,9 @@ class CustomPageFlip extends StatefulWidget {
   CustomPageFlipState createState() => CustomPageFlipState();
 }
 
+
+enum _GestureMode { none, scaling, dragging }
+
 class CustomPageFlipState extends State<CustomPageFlip>
     with TickerProviderStateMixin {
   int pageNumber = 0;
@@ -69,6 +75,8 @@ class CustomPageFlipState extends State<CustomPageFlip>
   bool? _isForward;
   int lastPageLoad = 0;
   TransformationController? transformationController;
+
+  final ValueNotifier<_GestureMode> _gestureMode = ValueNotifier(_GestureMode.none);
 
   @override
   void didUpdateWidget(CustomPageFlip oldWidget) {
@@ -106,7 +114,6 @@ class CustomPageFlipState extends State<CustomPageFlip>
       widget.children.add(widget.lastPage!);
     }
 
-
     for (var i = 0; i < widget.children.length; i++) {
       final controller = AnimationController(
         value: 1,
@@ -117,7 +124,8 @@ class CustomPageFlipState extends State<CustomPageFlip>
 
       // Get TransformationController from PdfController via widget.controller
       TransformationController transformationController =
-          widget.transformationControllerBuilder?.call(i) ?? TransformationController();
+          widget.transformationControllerBuilder?.call(i) ??
+              TransformationController();
 
       final child = PageFlipBuilder(
         amount: controller,
@@ -125,15 +133,24 @@ class CustomPageFlipState extends State<CustomPageFlip>
         isRightSwipe: widget.isRightSwipe,
         pageIndex: i,
         key: Key('item$i'),
-        child: InteractiveViewer(
-          transformationController: transformationController,
-          panEnabled: true,
-          scaleEnabled: true,
-          maxScale: 4.0,
-          minScale: 1.0,
-          child: widget.children[i],
+        child: Listener(
+          onPointerDown: (e) {
+            if (e.buttons == 0) return;
+            if (e.kind == PointerDeviceKind.touch && e.down && e.buttons == kSecondaryButton) return;
+          },
+          child: InteractiveViewer(
+            transformationController: transformationController,
+            panEnabled: false,       // disable internal panning
+            scaleEnabled: true,       // only zoom
+            onInteractionStart: (details) {
+              if (details.pointerCount > 1) _gestureMode.value = _GestureMode.scaling;
+            },
+            onInteractionEnd: (details) => _gestureMode.value = _GestureMode.none,
+            child: widget.children[i],
+          ),
         ),
       );
+
       pages.add(child);
     }
     pages = pages.reversed.toList();
@@ -151,6 +168,7 @@ class CustomPageFlipState extends State<CustomPageFlip>
   }
 
   bool get _isLastPage => (pages.length - 1) == pageNumber;
+
   bool get _isFirstPage => pageNumber == 0;
 
   void _turnPage(DragUpdateDetails details, BoxConstraints dimens) {

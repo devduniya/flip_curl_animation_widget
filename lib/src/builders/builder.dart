@@ -37,12 +37,21 @@ class PageFlipBuilderState extends State<PageFlipBuilder> {
     if (_boundaryKey.currentContext == null) return;
     await Future.delayed(const Duration(milliseconds: 100));
     if (mounted) {
-      final boundary = _boundaryKey.currentContext!.findRenderObject()!
-          as RenderRepaintBoundary;
-      final image = await boundary.toImage();
-      setState(() {
-        imageData[index] = image.clone();
-      });
+      try {
+        final boundary = _boundaryKey.currentContext!.findRenderObject()
+        as RenderRepaintBoundary?;
+
+        if (boundary != null) {
+          final image = await boundary.toImage();
+          if (mounted) {
+            setState(() {
+              imageData[index] = image.clone();
+            });
+          }
+        }
+      } catch (e) {
+        print('Error capturing image for page $index: $e');
+      }
     }
   }
 
@@ -64,7 +73,7 @@ class PageFlipBuilderState extends State<PageFlipBuilder> {
         } else {
           if (value == widget.pageIndex || (value == (widget.pageIndex + 1))) {
             WidgetsBinding.instance.addPostFrameCallback(
-              (timeStamp) => _captureImage(timeStamp, currentPageIndex.value),
+                  (timeStamp) => _captureImage(timeStamp, currentPageIndex.value),
             );
           }
           if (widget.pageIndex == currentPageIndex.value ||
