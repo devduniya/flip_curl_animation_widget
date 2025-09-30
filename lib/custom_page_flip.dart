@@ -65,7 +65,7 @@ class CustomPageFlip extends StatefulWidget {
 }
 
 
-enum _GestureMode { none, scaling, dragging }
+enum _GestureMode { none, scaling }
 
 class CustomPageFlipState extends State<CustomPageFlip>
     with TickerProviderStateMixin {
