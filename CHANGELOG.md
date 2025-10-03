@@ -6,6 +6,10 @@
 
 - Second release: Updated and optimised code
 
- ## [1.0.0] - 2025-09-04
+ ## [0.1.1] - 2025-09-16
 
-- Fourth release: added button and zoom functionality. 
+- Third release: added button functionality.
+
+  ## [1.0.0] - 2025-09-30
+
+- Fourth release: zoom functionality. 
