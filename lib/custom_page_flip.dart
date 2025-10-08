@@ -58,7 +58,7 @@ class CustomPageFlip extends StatefulWidget {
     this.controller,
     required this.transformationControllerBuilder,
   })  : assert(initialIndex < children.length,
-            'initialIndex cannot be greater than children length'),
+  'initialIndex cannot be greater than children length'),
         super(key: key);
 
   final Color backgroundColor;
@@ -71,7 +71,7 @@ class CustomPageFlip extends StatefulWidget {
   final bool isRightSwipe;
   final bool showControllerButton;
   final TransformationController Function(int pageIndex)?
-      transformationControllerBuilder;
+  transformationControllerBuilder;
 
   final ValueChanged<int>? onPageChanged;
   final void Function(int pageNumber)? onPageFlipped;
@@ -431,12 +431,12 @@ class CustomPageFlipState extends State<CustomPageFlip>
             child: RawGestureDetector(
               gestures: {
                 ConditionalHorizontalDragGestureRecognizer:
-                    GestureRecognizerFactoryWithHandlers<
-                        ConditionalHorizontalDragGestureRecognizer>(
-                  () => ConditionalHorizontalDragGestureRecognizer(
+                GestureRecognizerFactoryWithHandlers<
+                    ConditionalHorizontalDragGestureRecognizer>(
+                      () => ConditionalHorizontalDragGestureRecognizer(
                     canDrag: () => _canStartDrag,
                   ),
-                  (ConditionalHorizontalDragGestureRecognizer instance) {
+                      (ConditionalHorizontalDragGestureRecognizer instance) {
                     instance.onStart = (_) {};
                     instance.onUpdate = (details) => _turnPage(details, dimens);
                     instance.onEnd = (_) {
