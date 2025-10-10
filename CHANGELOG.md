@@ -6,7 +6,7 @@
 
 - Second release: Updated and optimised code. Adeed showControlButton to optionally show button . Added zoom functionality 
 
-## [0.1.0] - 2025-10-10
+## [0.1.1] - 2025-10-10
 
 - Second release: Updated and optimised code. Added enableSwipe field to optionally show flip animation on l to r  swipe 
   
