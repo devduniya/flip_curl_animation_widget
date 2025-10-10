@@ -9,4 +9,3 @@
 ## [0.1.1] - 2025-10-10
 
 - Second release: Updated and optimised code. Added enableSwipe field to optionally show flip animation on l to r  swipe 
-  
