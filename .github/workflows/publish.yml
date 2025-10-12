@@ -1,0 +1,18 @@
+name: Publish Flutter Package
+
+on:
+  push:
+    branches:
+      - pubdev
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  publish:
+    permissions:
+      id-token: write
+      contents: read
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
+    # If your package is not at the repo root, set the working-directory:
+    # with:
+    #   working-directory: packages/my_package

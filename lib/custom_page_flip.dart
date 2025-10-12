@@ -1,10 +1,29 @@
 import 'dart:async';
-import 'dart:ui';
+
 import 'package:flip_curl_animation_widget/src/builders/builder.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
-// PageFlipController class from PageFlipWidget
+class ConditionalHorizontalDragGestureRecognizer
+    extends HorizontalDragGestureRecognizer {
+  ConditionalHorizontalDragGestureRecognizer({
+    required this.canDrag,
+    Object? debugOwner,
+  }) : super(debugOwner: debugOwner);
+
+  final bool Function() canDrag;
+
+  @override
+  void addAllowedPointer(PointerDownEvent event) {
+    if (canDrag()) {
+      super.addAllowedPointer(event);
+    } else {
+      stopTrackingPointer(event.pointer);
+    }
+  }
+}
+
+// PageFlipController class
 class PageFlipController {
   CustomPageFlipState? _state;
 
@@ -39,7 +58,7 @@ class CustomPageFlip extends StatefulWidget {
     this.controller,
     required this.transformationControllerBuilder,
   })  : assert(initialIndex < children.length,
-            'initialIndex cannot be greater than children length'),
+  'initialIndex cannot be greater than children length'),
         super(key: key);
 
   final Color backgroundColor;
@@ -52,9 +71,8 @@ class CustomPageFlip extends StatefulWidget {
   final bool isRightSwipe;
   final bool showControllerButton;
   final TransformationController Function(int pageIndex)?
-      transformationControllerBuilder;
+  transformationControllerBuilder;
 
-  // Merged callbacks from both widgets
   final ValueChanged<int>? onPageChanged;
   final void Function(int pageNumber)? onPageFlipped;
   final void Function()? onFlipStart;
@@ -64,9 +82,6 @@ class CustomPageFlip extends StatefulWidget {
   CustomPageFlipState createState() => CustomPageFlipState();
 }
 
-
-enum _GestureMode { none, scaling }
-
 class CustomPageFlipState extends State<CustomPageFlip>
     with TickerProviderStateMixin {
   int pageNumber = 0;
@@ -74,36 +89,31 @@ class CustomPageFlipState extends State<CustomPageFlip>
   final List<AnimationController> _controllers = [];
   bool? _isForward;
   int lastPageLoad = 0;
-  TransformationController? transformationController;
 
-  final ValueNotifier<_GestureMode> _gestureMode = ValueNotifier(_GestureMode.none);
-
-  @override
-  void didUpdateWidget(CustomPageFlip oldWidget) {
-    super.didUpdateWidget(oldWidget);
-  }
+  // Pointer and gesture tracking
+  final Set<int> _activePointers = <int>{};
+  bool _isMultiTouch = false;
+  Timer? _resetTimer;
+  final Map<int, double> _scaleValues = {};
 
   @override
   void dispose() {
+    _resetTimer?.cancel();
     for (var c in _controllers) {
       c.dispose();
     }
-
     super.dispose();
   }
 
   @override
   void initState() {
     super.initState();
-    // Initialize global variables
     imageData = {};
     currentPage = ValueNotifier(-1);
     currentWidget = ValueNotifier(Container());
     currentPageIndex = ValueNotifier(0);
 
-    // Associate controller
     widget.controller?._state = this;
-
     _setUp();
   }
 
@@ -122,10 +132,15 @@ class CustomPageFlipState extends State<CustomPageFlip>
       );
       _controllers.add(controller);
 
-      // Get TransformationController from PdfController via widget.controller
       TransformationController transformationController =
           widget.transformationControllerBuilder?.call(i) ??
               TransformationController();
+
+      // Listen to scale changes
+      transformationController.addListener(() {
+        final scale = transformationController.value.getMaxScaleOnAxis();
+        _scaleValues[i] = scale;
+      });
 
       final child = PageFlipBuilder(
         amount: controller,
@@ -133,21 +148,27 @@ class CustomPageFlipState extends State<CustomPageFlip>
         isRightSwipe: widget.isRightSwipe,
         pageIndex: i,
         key: Key('item$i'),
-        child: Listener(
-          onPointerDown: (e) {
-            if (e.buttons == 0) return;
-            if (e.kind == PointerDeviceKind.touch && e.down && e.buttons == kSecondaryButton) return;
+        child: InteractiveViewer(
+          transformationController: transformationController,
+          panEnabled: true,
+          scaleEnabled: true,
+          minScale: 1.0,
+          maxScale: 4.0,
+          boundaryMargin: EdgeInsets.all(double.infinity),
+          onInteractionStart: (details) {
+            if (details.pointerCount >= 2) {
+              setState(() => _isMultiTouch = true);
+            }
           },
-          child: InteractiveViewer(
-            transformationController: transformationController,
-            panEnabled: false,       // disable internal panning
-            scaleEnabled: true,       // only zoom
-            onInteractionStart: (details) {
-              if (details.pointerCount > 1) _gestureMode.value = _GestureMode.scaling;
-            },
-            onInteractionEnd: (details) => _gestureMode.value = _GestureMode.none,
-            child: widget.children[i],
-          ),
+          onInteractionUpdate: (details) {
+            if (details.pointerCount >= 2) {
+              setState(() => _isMultiTouch = true);
+            }
+          },
+          onInteractionEnd: (details) {
+            _scheduleReset();
+          },
+          child: widget.children[i],
         ),
       );
 
@@ -167,16 +188,35 @@ class CustomPageFlipState extends State<CustomPageFlip>
     }
   }
 
+  void _scheduleReset() {
+    _resetTimer?.cancel();
+    _resetTimer = Timer(Duration(milliseconds: 400), () {
+      if (mounted && _activePointers.isEmpty) {
+        setState(() => _isMultiTouch = false);
+      }
+    });
+  }
+
   bool get _isLastPage => (pages.length - 1) == pageNumber;
 
   bool get _isFirstPage => pageNumber == 0;
 
+  bool get _isZoomedIn {
+    final currentScale = _scaleValues[pageNumber] ?? 1.0;
+    return currentScale > 1.01;
+  }
+
+  bool get _canStartDrag {
+    return !_isMultiTouch && !_isZoomedIn && _activePointers.length <= 1;
+  }
+
   void _turnPage(DragUpdateDetails details, BoxConstraints dimens) {
+    if (!_canStartDrag) return;
+
     currentPage.value = pageNumber;
     currentWidget.value = Container();
     final ratio = details.delta.dx / dimens.maxWidth;
 
-    // Call onFlipStart callback
     if (_isForward == null && widget.onFlipStart != null) {
       widget.onFlipStart!();
     }
@@ -190,8 +230,6 @@ class CustomPageFlipState extends State<CustomPageFlip>
           ? details.delta.dx > 0.2
           : details.delta.dx < -0.2) {
         _isForward = true;
-      } else {
-        _isForward = null;
       }
     }
 
@@ -255,7 +293,6 @@ class CustomPageFlipState extends State<CustomPageFlip>
       currentPageIndex.value = pageNumber;
       currentWidget.value = pages[pageNumber];
 
-      // Call both callbacks
       if (widget.onPageChanged != null) {
         widget.onPageChanged!(pageNumber);
       }
@@ -282,7 +319,6 @@ class CustomPageFlipState extends State<CustomPageFlip>
       currentPageIndex.value = pageNumber;
       currentWidget.value = pages[pageNumber];
 
-      // Call both callbacks
       if (widget.onPageChanged != null) {
         widget.onPageChanged!(pageNumber);
       }
@@ -304,7 +340,6 @@ class CustomPageFlipState extends State<CustomPageFlip>
         pageNumber++;
       });
 
-      // Call both callbacks
       if (widget.onPageChanged != null) widget.onPageChanged!(pageNumber);
       if (widget.onPageFlipped != null) widget.onPageFlipped!(pageNumber);
     }
@@ -333,7 +368,6 @@ class CustomPageFlipState extends State<CustomPageFlip>
         pageNumber--;
       });
 
-      // Call both callbacks
       if (widget.onPageChanged != null) widget.onPageChanged!(pageNumber);
       if (widget.onPageFlipped != null) widget.onPageFlipped!(pageNumber);
     }
@@ -348,7 +382,6 @@ class CustomPageFlipState extends State<CustomPageFlip>
         pageNumber = index;
       });
 
-      // Call both callbacks
       if (widget.onPageChanged != null) widget.onPageChanged!(pageNumber);
       if (widget.onPageFlipped != null) widget.onPageFlipped!(pageNumber);
     }
@@ -370,66 +403,109 @@ class CustomPageFlipState extends State<CustomPageFlip>
 
   @override
   Widget build(BuildContext context) {
-    return Stack(children: [
-      LayoutBuilder(
-        builder: (context, dimens) => GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTapDown: (details) {},
-          onTapUp: (details) {},
-          onTapCancel: () {},
-          // Use only horizontal drag gestures for page flipping
-          onHorizontalDragCancel: () => _isForward = null,
-          onHorizontalDragUpdate: (details) => _turnPage(details, dimens),
-          onHorizontalDragEnd: (details) => _onDragFinish(),
-          child: Stack(
-            fit: StackFit.expand,
-            children: <Widget>[
-              if (widget.lastPage != null) ...[
-                widget.lastPage!,
-              ],
-              if (pages.isNotEmpty) ...pages else ...[const SizedBox.shrink()],
-            ],
-          ),
-        ),
-      ),
+    return Stack(
+      children: [
+        LayoutBuilder(
+          builder: (context, dimens) => Listener(
+            behavior: HitTestBehavior.opaque,
+            onPointerDown: (event) {
+              _activePointers.add(event.pointer);
 
-      // Navigation buttons
-      if (!_isFirstPage && widget.showControllerButton)
-        Positioned(
-          left: 16,
-          top: 0,
-          bottom: 0,
-          child: Center(
-            child: FloatingActionButton(
-              heroTag: "prev_btn",
-              onPressed: () async {
-                if (!_isFirstPage) await animateToPreviousPage();
+              if (_activePointers.length >= 2) {
+                setState(() => _isMultiTouch = true);
+              }
+            },
+            onPointerMove: (event) {
+              if (_activePointers.length >= 2) {
+                setState(() => _isMultiTouch = true);
+              }
+            },
+            onPointerUp: (event) {
+              _activePointers.remove(event.pointer);
+              _scheduleReset();
+            },
+            onPointerCancel: (event) {
+              _activePointers.remove(event.pointer);
+              _scheduleReset();
+            },
+            child: RawGestureDetector(
+              gestures: {
+                ConditionalHorizontalDragGestureRecognizer:
+                GestureRecognizerFactoryWithHandlers<
+                    ConditionalHorizontalDragGestureRecognizer>(
+                      () => ConditionalHorizontalDragGestureRecognizer(
+                    canDrag: () => _canStartDrag,
+                  ),
+                      (ConditionalHorizontalDragGestureRecognizer instance) {
+                    instance.onStart = (_) {};
+                    instance.onUpdate = (details) => _turnPage(details, dimens);
+                    instance.onEnd = (_) {
+                      _onDragFinish();
+                    };
+                    instance.onCancel = () {
+                      _isForward = null;
+                    };
+                  },
+                ),
               },
-              child: Icon(Icons.arrow_back_ios_new_rounded),
-              backgroundColor: Colors.grey.withValues(alpha: 0.7),
-              mini: true,
-              elevation: 4,
+              behavior: HitTestBehavior.opaque,
+              child: Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  if (widget.lastPage != null) ...[
+                    widget.lastPage!,
+                  ],
+                  if (pages.isNotEmpty)
+                    ...pages
+                  else ...[const SizedBox.shrink()],
+                ],
+              ),
             ),
           ),
         ),
-      if (!_isLastPage && widget.showControllerButton)
-        Positioned(
-          right: 16,
-          top: 0,
-          bottom: 0,
-          child: Center(
-            child: FloatingActionButton(
-              heroTag: "next_btn",
-              onPressed: () async {
-                if (!_isLastPage) await animateToNextPage();
-              },
-              child: Icon(Icons.arrow_forward_ios_rounded),
-              backgroundColor: Colors.grey.withValues(alpha: 0.7),
-              mini: true,
-              elevation: 4,
+
+        // Navigation buttons
+        if (!_isFirstPage && widget.showControllerButton)
+          Positioned(
+            left: 16,
+            top: 0,
+            bottom: 0,
+            child: Center(
+              child: FloatingActionButton(
+                heroTag: "prev_btn",
+                onPressed: () async {
+                  if (!_isFirstPage && !_isMultiTouch) {
+                    await animateToPreviousPage();
+                  }
+                },
+                child: Icon(Icons.arrow_back_ios_new_rounded),
+                backgroundColor: Colors.grey.withValues(alpha: 0.7),
+                mini: true,
+                elevation: 4,
+              ),
             ),
           ),
-        ),
-    ]);
+        if (!_isLastPage && widget.showControllerButton)
+          Positioned(
+            right: 16,
+            top: 0,
+            bottom: 0,
+            child: Center(
+              child: FloatingActionButton(
+                heroTag: "next_btn",
+                onPressed: () async {
+                  if (!_isLastPage && !_isMultiTouch) {
+                    await animateToNextPage();
+                  }
+                },
+                child: Icon(Icons.arrow_forward_ios_rounded),
+                backgroundColor: Colors.grey.withValues(alpha: 0.7),
+                mini: true,
+                elevation: 4,
+              ),
+            ),
+          ),
+      ],
+    );
   }
 }
